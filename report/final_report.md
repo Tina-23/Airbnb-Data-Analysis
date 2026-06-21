@@ -36,7 +36,7 @@ This report presents the findings of an end-to-end data engineering and analytic
 ### Key Findings
 
 **Market Size**
-- Singapore: 2,643 active priced listings across 44 neighbourhoods
+- Singapore: 2,643 active priced listings across 40 neighbourhoods
 - Bangkok: 23,273 active priced listings across 50 neighbourhoods — approximately 8.8x larger
 
 **Price Comparison (USD — Sep 2025 rates)**
@@ -115,7 +115,7 @@ The assignment was intentionally scoped to Phase 1–3 (Foundation, Engineering 
 |---|---|---|---|
 | listings.csv | 3,693 rows | 28,806 rows | Core listing data — 18 columns |
 | reviews.csv | 38,350 rows | 583,333 rows | listing_id + review date only |
-| neighbourhoods.csv | 55 rows | 50 rows | Neighbourhood name + group |
+| neighbourhoods.csv | 55 rows (44 with listings in Sep 2025 scrape) | 50 rows | Neighbourhood name + group |
 | calendar.csv.gz | 1,347,945 rows | 10,514,202 rows | Daily availability per listing |
 
 ### 3.2 Schema
@@ -160,7 +160,9 @@ While schemas are identical, there are functional differences:
 |---|---|---|
 | Listings with at least one review | 1,847 / 3,693 (50%) | 18,716 / 28,806 (65%) |
 | Orphan review IDs | 0 | 0 |
-| Neighbourhood name match | 44 / 44 (100%) | 50 / 50 (100%) |
+| Neighbourhood name match (raw listings vs reference file) | 44 / 44 (100%) | 50 / 50 (100%) |
+
+After price-null cleaning, 4 Singapore neighbourhoods (Tuas, Mandai, Pioneer, Sungei Kadut) lose all their listings, reducing the analytical neighbourhood count from 44 to **40**. The 55-row reference file contains 11 neighbourhood names that had no Airbnb listings at all in the September 2025 scrape.
 
 ### 3.6 Calendar File Findings
 
@@ -300,7 +302,7 @@ A DuckDB star schema was implemented for the analytical layer:
 |---|---|---|
 | `fact_listings` | 25,916 | One row per listing — all measurable values |
 | `dim_host` | 7,265 | Host attributes + commercial tier |
-| `dim_neighbourhood` | 90 | Neighbourhood names + city aggregates |
+| `dim_neighbourhood` | 90 (SG: 40 + BK: 50) | Neighbourhood names + city aggregates |
 | `dim_room_type` | 4 | Room type lookup |
 
 ---
@@ -317,6 +319,7 @@ Singapore's price distribution is right-skewed with significant outliers. Cappin
 | Hotel room | 192 | 66 |
 | Private room | 95 | 1,251 |
 | Shared room | 65 | 28 |
+| **All types (blended median)** | **221** | **2,643** |
 
 The entire-home premium over private room is **3.31x** — the largest differential of the two markets studied.
 
@@ -373,6 +376,7 @@ Bangkok's price distribution is far more skewed than Singapore's (skewness 53.24
 | Hotel room | 1,473 | 351 |
 | Private room | 1,090 | 6,263 |
 | Shared room | 650 | 161 |
+| **All types (blended median)** | **1,379** | **23,273** |
 
 ### 8.2 Room Type Market Composition
 
@@ -436,7 +440,7 @@ Bangkok also shows heavy commercial operator concentration, though slightly less
 
 | City | Neighbourhoods Tested | F-Statistic | p-value | Result |
 |---|---|---|---|---|
-| Singapore | 44 | 4.28 | < 0.001 | **Significant** — reject H0 |
+| Singapore | 34 (of 40, filtered to ≥10 listings) | 4.28 | < 0.001 | **Significant** — reject H0 |
 | Bangkok | 50 | 0.96 | 0.556 | **Not significant** — fail to reject H0 |
 
 **Key insight:** In Singapore, where you list matters significantly — location is a genuine price driver. In Bangkok, neighbourhood has almost no explanatory power for price. Bangkok pricing appears driven by property quality, size, and room type — factors not captured in the summary listing file.
