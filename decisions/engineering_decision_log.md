@@ -5,7 +5,7 @@
 
 ---
 
-## Day 1 — Dataset Familiarization & Ingestion (`src/ingest.py`)
+## Day 1 — Dataset Familiarization, Ingestion & Cleaning (`src/ingest.py`, `src/clean.py`)
 
 ### DEC-01 — Use summary `listings.csv` not detailed version
 **Decision:** Built pipeline on the summary listings file (18 columns) rather than the detailed version (70+ columns).  
@@ -25,16 +25,14 @@
 
 ### DEC-03 — Use median not mean for price aggregation
 **Decision:** All price aggregations (neighbourhood summaries, cross-city comparisons) use median, not mean.  
-**Reason:** Price distributions are heavily right-skewed: Singapore skewness = 11.3, Bangkok skewness = 53.2. A ฿1,000,000 Bangkok listing pulls the mean far from a typical listing's price. Median is robust to these extremes.  
+**Reason:** Price distributions are heavily right-skewed: Singapore skewness = 11.3, Bangkok skewness = 53.2. A listing priced at THB 1,000,000 pulls the mean far from a typical listing's price. Median is robust to these extremes.  
 **Applied in:** `enrich.py` neighbourhood aggregates, all EDA charts, SQL queries in `model.py`.
 
 ---
 
-## Day 2 — Cleaning & Standardization (`src/clean.py`)
-
 ### DEC-04 — Cap `maximum_nights` at 365
 **Decision:** Any `maximum_nights` value above 365 is capped at 365.  
-**Reason:** The calendar file contained a value of 2,147,483,647 (2³¹ − 1), which is INT_MAX — a 32-bit integer overflow artifact from the scraper, not a real host constraint. A year (365 days) is the practical maximum for any Airbnb booking window.  
+**Reason:** The calendar file contained a value of 2,147,483,647 (2^31 - 1), which is INT_MAX — a 32-bit integer overflow artifact from the scraper, not a real host constraint. A year (365 days) is the practical maximum for any Airbnb booking window.  
 **Rows affected:** 4 Bangkok listings in Nong Chok neighbourhood.
 
 ---
@@ -59,7 +57,7 @@
 
 ---
 
-## Day 3 — Enrichment, Modelling & Storage (`src/enrich.py`, `src/model.py`)
+## Day 2 — Enrichment & Modelling (`src/enrich.py`, `src/model.py`)
 
 ### DEC-08 — Left join listings to reviews (not inner)
 **Decision:** Listings are left-joined to the review summary.  
@@ -74,9 +72,9 @@
 
 ---
 
-### DEC-10 — Calendar inner-joined to listings to recover price per day
-**Decision:** `price` and `adjusted_price` from `calendar.csv.gz` are dropped (100% null). The calendar is instead inner-joined with cleaned listings on `listing_id = id` so the listing's base price, `room_type`, and `neighbourhood` attach to every calendar row.  
-**Reason:** Per-day pricing is unavailable. However, the calendar's `available` column is fully populated. Joining with listings allows H5 to be tested as a weekend vs weekday availability comparison — lower availability on weekends signals higher weekend demand and is a valid proxy for pricing pressure.  
+### DEC-10 — Calendar inner-joined to listings; listing-level price is the sole price source
+**Decision:** `price` and `adjusted_price` from `calendar.csv.gz` are dropped (100% null). The calendar is inner-joined with cleaned listings on `listing_id = id` to attach `room_type` and `neighbourhood` onto every calendar row. The listing's base price is also attached for reference, but the calendar is used exclusively for its `available` (t/f) column — not for per-day pricing.  
+**Reason:** Per-day pricing is unavailable. The calendar's `available` column is fully populated and enables H5 to be tested as a weekend vs weekday availability comparison — lower availability on weekends signals higher weekend demand.  
 **Impact:** H5 tested via two-proportions z-test on availability rates. Enriched calendar saved to `calendar_{city}_enriched.parquet`. See `enrich.py` `enrich_calendar()`.
 
 ---
@@ -89,20 +87,20 @@
 
 ### DEC-12 — Parquet for processed data storage
 **Decision:** All cleaned and enriched outputs saved as `.parquet` files.  
-**Reason:** Parquet is columnar — reads only the columns needed, not the full file. Preserves exact dtypes including `datetime64` (CSV would lose this on re-read). Significantly faster than CSV for the Bangkok dataset (23k rows × 29 columns).
+**Reason:** Parquet is columnar — reads only the columns needed, not the full file. Preserves exact dtypes including `datetime64` (CSV would lose this on re-read). Significantly faster than CSV for the Bangkok dataset (23k rows x 29 columns).
 
 ---
 
 ### DEC-13 — Convert prices to USD for cross-city comparison
 **Decision:** A `price_usd` column is derived in `enrich.py` alongside the local currency `price` column.  
-**Reason:** Singapore prices are in SGD and Bangkok prices are in THB. Placing them side by side without conversion is misleading — SGD 221 and THB 1,379 appear numerically close but represent USD 166 vs USD 39 respectively. Any cross-city chart comparing absolute prices must use a common currency to be meaningful.  
+**Reason:** Singapore prices are in SGD and Bangkok prices are in THB. Placing them side by side without conversion is misleading — SGD 221 and THB 1,379 appear numerically close but represent USD 166 vs USD 39 respectively.  
 **Exchange rates used:** As of scrape date Sep 2025 — 1 SGD = 0.75 USD, 1 THB = 0.028 USD (xe.com historical rates).  
 **What is preserved:** The original `price` column in local currency is kept on every row for within-city analysis. `price_usd` is used only for cross-city comparisons.  
 **Limitation:** Exchange rates fluctuate and do not reflect purchasing power parity (PPP).
 
 ---
 
-## Day 4 — Statistical Analysis (`notebooks/04_statistical_analysis.ipynb`)
+## Day 3 — Statistical Analysis (`notebooks/04_statistical_analysis.ipynb`)
 
 ### DEC-14 — Use Mann-Whitney U not t-test for H1
 **Decision:** Mann-Whitney U test used for entire-home vs private-room price comparison.  
@@ -114,4 +112,4 @@
 **Decision:** Dependent variable in OLS regression is `log(price + 1)`, not raw price. Model enhanced beyond the baseline four features.  
 **Reason:** Raw price is right-skewed, violating OLS assumptions of normally distributed residuals. Log transformation makes the distribution more symmetric and coefficients interpretable as approximate percentage changes.  
 **Enhanced features added:** `reviews_per_month` (demand velocity), `calculated_host_listings_count` (host scale effect), `log(nb_median_price)` (neighbourhood price context). Singapore model also includes neighbourhood fixed effects (ANOVA confirmed location significance, p < 0.001).  
-**Outcome:** Singapore R² improved from 0.432 → 0.512. Bangkok R² improved from 0.082 → 0.178.
+**Outcome:** Singapore R² improved from 0.432 to 0.512. Bangkok R² improved from 0.082 to 0.178.

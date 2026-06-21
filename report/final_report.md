@@ -25,6 +25,7 @@
 13. [Appendix A — AI Usage Disclosure](#appendix-a--ai-usage-disclosure)
 14. [Appendix B — Key Engineering Decisions](#appendix-b--key-engineering-decisions)
 15. [Appendix C — Skipped Hypotheses](#appendix-c--skipped-hypotheses)
+16. [Appendix D — Issues Found & Debugging Approach](#appendix-d--issues-found--debugging-approach)
 
 ---
 
@@ -112,7 +113,7 @@ The assignment was intentionally scoped to Phase 1–3 (Foundation, Engineering 
 
 | File | Singapore | Bangkok | Contents |
 |---|---|---|---|
-| listings.csv | 3,710 rows | 28,978 rows | Core listing data — 18 columns |
+| listings.csv | 3,693 rows | 28,806 rows | Core listing data — 18 columns |
 | reviews.csv | 38,350 rows | 583,333 rows | listing_id + review date only |
 | neighbourhoods.csv | 55 rows | 50 rows | Neighbourhood name + group |
 | calendar.csv.gz | 1,347,945 rows | 10,514,202 rows | Daily availability per listing |
@@ -346,7 +347,7 @@ Singapore's median availability is **357 days per year** — listings are open f
 | Museum | SGD 295 | 97 |
 | Newton | SGD 275 | 50 |
 
-The Central Region dominates Singapore's listing supply (2,987 of 2,643 clean listings).
+The Central Region dominates Singapore's listing supply — 2,155 of the 2,643 clean listings (81.5%) are located there.
 
 ### 7.5 Host Portfolio Segmentation
 
@@ -399,7 +400,7 @@ Bangkok has 50 neighbourhoods with no regional grouping available. Price variati
 | Parthum Wan | THB 2,248 | 567 |
 | Bang Rak | THB 1,890 | 756 |
 | Samphanthawong | THB 1,879 | 169 |
-| Pom Prap Sattru Phai | THB 1,503 | 154 |
+| Vadhana | THB 1,828 | 3,709 |
 | Khlong Toei | THB 1,622 | 3,119 |
 
 ### 8.5 Host Portfolio Segmentation
@@ -607,18 +608,18 @@ All code, findings, and engineering decisions were reviewed and understood by th
 | DEC-01 | Day 1 | Used summary listings.csv — detailed file unavailable at build time |
 | DEC-02 | Day 1 | Dropped price nulls (28.4% SG, 19.2% BK) rather than imputing |
 | DEC-03 | Day 1 | Used median not mean for all price aggregation (skewness > 10) |
-| DEC-04 | Day 2 | Capped maximum_nights at 365 (INT_MAX overflow artifact) |
-| DEC-05 | Day 2 | Filled reviews_per_month nulls with 0 (not missing, just no reviews) |
-| DEC-06 | Day 2 | Parsed last_review to datetime (enables time-series operations) |
-| DEC-07 | Day 2 | Dropped 100% null columns per city (Bangkok neighbourhood_group, license) |
-| DEC-08 | Day 3 | Left join listings to reviews (preserves zero-review listings) |
-| DEC-09 | Day 3 | Used occupancy proxy = (365 − availability_365) / 365 |
-| DEC-10 | Day 3 | Calendar inner-joined to listings — listing price attached per calendar day |
-| DEC-11 | Day 3 | DuckDB for analytical layer (zero-config, parquet-native) |
-| DEC-12 | Day 3 | Parquet for processed data storage (columnar, type-preserving) |
-| DEC-13 | Day 3 | USD conversion for cross-city comparison (1 SGD = 0.75, 1 THB = 0.028) |
-| DEC-14 | Day 4 | Mann-Whitney U over t-test (price is non-normal) |
-| DEC-15 | Day 4 | log(price) in OLS regression + enhanced model features (R² SG 0.432→0.512) |
+| DEC-04 | Day 1 | Capped maximum_nights at 365 (INT_MAX overflow artifact) |
+| DEC-05 | Day 1 | Filled reviews_per_month nulls with 0 (not missing, just no reviews) |
+| DEC-06 | Day 1 | Parsed last_review to datetime (enables time-series operations) |
+| DEC-07 | Day 1 | Dropped 100% null columns per city (Bangkok neighbourhood_group, license) |
+| DEC-08 | Day 2 | Left join listings to reviews (preserves zero-review listings) |
+| DEC-09 | Day 2 | Used occupancy proxy = (365 − availability_365) / 365 |
+| DEC-10 | Day 2 | Calendar inner-joined to listings — listing-level price is sole price source; calendar used for availability only |
+| DEC-11 | Day 2 | DuckDB for analytical layer (zero-config, parquet-native) |
+| DEC-12 | Day 2 | Parquet for processed data storage (columnar, type-preserving) |
+| DEC-13 | Day 2 | USD conversion for cross-city comparison (1 SGD = 0.75, 1 THB = 0.028) |
+| DEC-14 | Day 3 | Mann-Whitney U over t-test (price is non-normal) |
+| DEC-15 | Day 3 | log(price) in OLS regression + enhanced model features (R² SG 0.432→0.512) |
 
 ---
 
@@ -631,3 +632,32 @@ All code, findings, and engineering decisions were reviewed and understood by th
 | H5: Weekend vs weekday pricing | Calendar price data | Calendar price 100% null |
 
 These hypotheses would be testable if the detailed `listings.csv` (full metadata, ~70 columns) and a populated calendar price file were obtained from Inside Airbnb's full data export.
+
+---
+
+## Appendix D — Issues Found & Debugging Approach
+
+During report assembly, a set of internal-consistency errors were discovered in the draft figures. Rather than correcting them silently, a reusable validation layer (`src/validate.py`) was built to catch each error class automatically and to act as a publish-gate before the PDF is generated. This appendix documents each issue, its root cause, and how it was resolved.
+
+### D.1 Debugging Philosophy
+
+Numbers in a report fail in predictable ways: a subset is quoted larger than its parent, segment counts don't reconcile to a total, a currency conversion doesn't trace back to its source figure, a "top-N" table isn't actually sorted, or the same population is quoted with two different counts in two sections. Each of these is mechanically checkable. The `Validator` class encodes one assertion per failure mode, runs across all reported figures, and in strict mode halts the build if any check fails — so a bad number cannot survive into the final document.
+
+### D.2 Issues Found and How They Were Resolved
+
+| ID | Issue | Root cause | Detection | Resolution |
+|---|---|---|---|---|
+| BUG-01 | §7.4 stated "2,987 of 2,643 clean listings" — a subset larger than the total | Central Region figure was taken from the **raw** frame while the total referenced the **cleaned** frame; the two were never compared | `subset_not_exceeding_total()` — asserts subset ≤ total | Recomputed Central Region count from the cleaned frame: 2,155 of 2,643 (81.5%) |
+| BUG-02 | §8.4 "top 5 most expensive" listed Khlong Toei (THB 1,622) below Pom Prap Sattru Phai (THB 1,503), and Pom Prap Sattru Phai was not even in the top 5 | Table was ordered by listing count, not by price, and a wrong neighbourhood entry was carried over | `is_sorted_desc()` — asserts a ranked table is monotonically descending | Table re-derived from the cleaned parquet sorted by median price: 4th place is Vadhana (THB 1,828) |
+| BUG-03 | Singapore raw listing count appeared as 3,710 (§3.1) and 3,693 (§3.5, §5.2) | Two independent reads of the source file; 3,710 was a manual note taken before deduplication | `no_drift()` — asserts two figures for the same population agree | Canonical raw count is 3,693 — confirmed from `listings.csv` directly; §3.1 corrected |
+| BUG-04 | Risk of silently aggregating calendar `price`/`adjusted_price` (100% null) | Aggregation functions return without error on an all-null column, producing meaningless output | `not_all_null()` — asserts a column has at least one non-null before it is aggregated | Calendar-price analysis was correctly excluded; the check now enforces this rule so the exclusion cannot be accidentally reversed |
+| BUG-05 | Appendix B decisions DEC-14/15 were tagged "Day 4" in a 3-day project | Carry-over from an earlier 4-day plan that was revised | Manual review | Relabelled to Day 3. Decision log restructured: Day 1 = Ingestion & Cleaning, Day 2 = Enrichment & Modelling, Day 3 = Statistical Analysis |
+| BUG-06 | DEC-10 described "listing price attached per calendar day" in a way that could imply per-day dynamic pricing exists | Decision-log entry written before the null-price finding was fully confirmed | Cross-reference against §3.6 and Q4 | Reworded to state that listing-level price is the sole price source and the calendar is used only for availability (`available` t/f column) |
+
+### D.3 Validation as a Publish-Gate
+
+The validator (`src/validate.py`) runs in two modes. In **soft mode** (`strict=False`) it collects all findings so the full picture is visible in one pass; in **strict mode** it raises on the first failure and `gate_report()` aborts the build. Running the suite against the corrected figures yields zero failures.
+
+### D.4 Outcome
+
+Six issues were identified and resolved. None affected the underlying analytical conclusions — the market-size, premium, host-concentration, and growth findings all held — but they would have undermined the report's credibility. The lasting deliverable is the `validate.py` module: a reusable consistency layer that would catch the same error classes in any future dataset or city added to the pipeline.
