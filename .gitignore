@@ -1,0 +1,26 @@
+# Raw data files — download from Inside Airbnb (https://insideairbnb.com/get-the-data/)
+data/raw/singapore/listings.csv
+data/raw/singapore/listings.csv.gz
+data/raw/singapore/reviews.csv
+data/raw/singapore/reviews.csv.gz
+data/raw/singapore/calendar.csv.gz
+data/raw/singapore/neighbourhoods.geojson
+data/raw/bangkok/listings.csv
+data/raw/bangkok/listings.csv.gz
+data/raw/bangkok/reviews.csv
+data/raw/bangkok/reviews.csv.gz
+data/raw/bangkok/calendar.csv.gz
+data/raw/bangkok/neighbourhoods.geojson
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
